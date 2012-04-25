@@ -1,4 +1,6 @@
-cloudeo_sample_app
+Cloudeo Sample App
 ==================
 
-Sample application providing showcase for the Cloudeo Plug-In
+Sample application providing showcase for Cloudeo Plug-In API.
+
+Read more on http://www.cloudeo.tv
