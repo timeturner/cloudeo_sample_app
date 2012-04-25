@@ -170,8 +170,17 @@ function tryUpdatePlugin() {
 }
 
 function showInstallFrame() {
+  log_d("Plugin not installed. Use install plugin button. Refresh the page when complete");
   getDescriptor(function (descr) {
-//    TODO fill the install URLS
+    var href = descr['url.installer'];
+    if ($.browser.msie) {
+      href = descr['url.clickOnceInstaller']
+    } else if ($.browser.webkit && window.navigator.userAgent.match(/Chrome/)) {
+      href = descr['url.chromeExtension'];
+    } else if ($.browser.mozilla) {
+      href = descr['url.firefoxExtension'];
+    }
+    $('#installButton').attr('href', href).show();
   });
 }
 
