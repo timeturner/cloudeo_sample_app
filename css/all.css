@@ -9,17 +9,22 @@
     margin: 30px auto;
 }
 
-
-.feeds-wrapper {
-    margin: 20px 0;
-}
-
-.feed-wrapper {
+.feeds-wrapper > li {
     float: left;
-    margin-right: 10px;
+    list-style: none;
+    margin: 4px;
+    border: 1px solid black;
     width: 320px;
     height: 240px;
-    border: 1px solid black;
+}
+
+.feeds-wrapper {
+    float: left;
+    margin-right: 10px;
+    width: 660px;
+    min-height: 250px;
+    background: #a3a3a3;
+    border: 1px solid #727272;
 }
 
 .feed-wrapper object {

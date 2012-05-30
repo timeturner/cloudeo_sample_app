@@ -7,12 +7,11 @@
   <link media="all" rel="stylesheet" type="text/css"
         href="css/bootstrap.min.css"/>
   <script type="text/javascript" src="js/jquery-1.7.1.min.js"></script>
-  <script type="text/javascript" src="js/CloudeoPlugin.js"></script>
-  <script type="text/javascript" src="js/PluginServiceListener.js"></script>
-  <script type="text/javascript" src="js/PluginServiceListener.js"></script>
-  <script type="text/javascript" src="js/PluginServiceWrapper.js"></script>
   <script type="text/javascript" src="js/scripts.js"></script>
+  <script type="text/javascript"
+          src="http://www.cloudeo.tv/plugin/sdk/cloudeo-sdk.js">
 
+  </script>
   <script type="text/javascript">
     $(initPlugin);
   </script>
@@ -29,16 +28,19 @@
 <div class="content-wrapper">
   <h1>Cloudeo Plug-In Demo application</h1>
 
-  <div class="feeds-wrapper">
-    <div id="localVideoWrapper" class="feed-wrapper"></div>
-    <div id="remoteVideoWrapper" class="feed-wrapper"></div>
-    <div class="clearer"></div>
-  </div>
+  <ul class="feeds-wrapper">
+
+  </ul>
+  <div class="clearer"></div>
   <div>
     Room id: <input id="roomId" type="text"/>
     <a class="btn btn-primary" onclick="connect($('#roomId').val())">Connect</a>
+    <a class="btn" onclick="disconnect()">Disconnect</a>
     <a id="installButton" class="btn btn-primary" href="#"
        style="display: none;">Install plug-in</a>
+  </div>
+  <div>
+    Webcam: <select id="webcamsSelect"></select>
   </div>
   <h2>
     Logd

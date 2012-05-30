@@ -16,11 +16,37 @@ var UPDATE_DESCR_BASE = 'http://www.cloudeo.tv/plugin/update.';
 
 var PLUGIN_CONTAINER_ID = 'pluginContainer';
 
-var plugin = false;
+/**
+ *
+ * CloudeoPlugin instance.
+ * @type CDO.CloudeoPlugin
+ */
+var plugin;
 
-var RENDER_TMPL =
-    '<object type="application/x-cloudeoplugin" vcamId="#"><property name="vcamId" value="#"/></object>';
+/**
+ * CloudeoService instance.
+ * @type CDO.CloudeoService
+ */
+var service;
 
+//noinspection StringLiteralBreaksHTMLJS
+
+/**
+ * Template for rendering remote user video feed.
+ * @type {String}
+ */
+var RENDER_TMPL = '<li id="userFeed#" class="remote-feed"></li>';
+
+/**
+ * Template for rendering local user video feed.
+ * @type {String}
+ */
+var RENDER_LOCAL_TMPL = '<li id="userFeed#"></li>';
+
+/**
+ * Connection descriptor - describes the connection to be established.
+ * @type {Object}
+ */
 var CONNECTION_DESCRIPTOR = {
   lowVideoStream:{
     publish:true,
@@ -47,9 +73,35 @@ var CONNECTION_DESCRIPTOR = {
 
 };
 
+
+/**
+ * Initializes the plugin by:
+ * - setting up cloudeo logging
+ * - checking whether it's installed, if so - create CloudeoService
+ * - show the install plugin button otherwise
+ */
 function initPlugin() {
+
+//  Setup logging using our handler
+  CDO.initLogging(function (lev, msg) {
+    switch (lev) {
+      case "DEBUG":
+        log_d("[CDO] " + msg);
+        break;
+      case "WARN":
+        log_e("[CDO] " + msg);
+        break;
+      case "ERROR":
+        log_e("[CDO] " + msg);
+        break;
+      default:
+        log_e("Got unsupported log level: " + lev + ". Message: " + msg);
+    }
+  }, true);
   log_d("Initializing the plug-in");
-  plugin = new CloudeoPlugin(PLUGIN_CONTAINER_ID);
+
+//  Try to load the plugin
+  plugin = new CDO.CloudeoPlugin(PLUGIN_CONTAINER_ID);
   var loadStatus = plugin.loadPlugin();
   if (loadStatus) {
 //    Plugin is installed
@@ -60,37 +112,62 @@ function initPlugin() {
   }
 }
 
+/**
+ * Further configures, the plugin - creates service and initializes devices.
+ */
 function startPlugin() {
   log_d("Starting the plug-in");
-  plugin.createService(r(function (service) {
-    PluginServiceWrapper.setService(service);
-    PluginServiceWrapper.addPluginListener(r(), PluginServiceListener.createInstance());
+
+//  Create and configure listener
+  var listener = new CDO.CloudeoServiceListener();
+  listener.onUserEvent = function (/**CDO.UserStateChangedEvent*/e) {
+    if (e.isConnected) {
+      newUser(e);
+    } else {
+      userGone(e);
+    }
+  };
+
+//  Create the CloudeoService
+  plugin.createService(CDO.createResponder(function (result) {
+    service = /**CDO.CloudeoService*/ result;
+    service.addServiceListener(CDO.createResponder(), listener);
     initVideo();
     initAudio();
   }));
 }
 
+
+/**
+ * Initializes audio subsystem:
+ * - fetches microphones and speakers
+ * - selects first mic and fisrt speaker to be used by the Cloudeo Service
+ */
 function initAudio() {
   log_d("Initializing the audio subsystem");
   log_d("Getting audio capture devices");
-  PluginServiceWrapper.getAudioCaptureDeviceNames(
-      r(function (devs) {
+
+//  Initialize microphones
+  service.getAudioCaptureDeviceNames(
+      CDO.createResponder(function (devs) {
         log_d("Got audio capture devices: " + JSON.stringify(devs));
         log_d("Using audio capture device: " + devs[0]);
         if (devs.length > 0) {
-          PluginServiceWrapper.setAudioCaptureDevice(r(function () {
+          service.setAudioCaptureDevice(CDO.createResponder(function () {
             log_d("Audio capture device configured");
           }), 0);
         }
       }));
   log_d("Getting audio output devices");
-  PluginServiceWrapper.getAudioOutputDeviceNames(
-      r(function (devs) {
+
+//  Initialize speakers
+  service.getAudioOutputDeviceNames(
+      CDO.createResponder(function (devs) {
         log_d("Got audio output devices: " + JSON.stringify(devs));
         log_d("Using audio output device: " + devs[0]);
 
         if (devs.length > 0) {
-          PluginServiceWrapper.setAudioOutputDevice(r(
+          service.setAudioOutputDevice(CDO.createResponder(
               function () {
                 log_d("Audio output device configured");
               }
@@ -99,42 +176,75 @@ function initAudio() {
       }));
 }
 
+/**
+ * Initializes video devices:
+ * - fetches device list
+ * - fills the web cam selection combo
+ * - selects last device from the list
+ * - configures change event listener on the webcam combo, to allow switching
+ *   between devices.
+ */
 function initVideo() {
   log_d("Initializing the video subsystem");
+
   var setVideoDev = function (devs) {
     log_d("Got video capture devices: " + JSON.stringify(devs));
-    var dev;
+    var dev = '';
+    $('#webcamsSelect').append($('<option value="none">-- Select --</option> ')).val('none');
     $.each(devs, function (k, v) {
       dev = k;
+      $('#webcamsSelect').append($('<option value="' + k + '">' + v + '</option> '));
+    });
+    $('#webcamsSelect').change(function () {
+      var selected = $(this).val();
+      service.setVideoCaptureDevice(CDO.createResponder(function () {
+        window.configuredDevice = selected;
+        startLocalPreview();
+      }), selected);
     });
     if (dev) {
       log_d("Using video capture device: " + JSON.stringify(devs[dev]));
-      PluginServiceWrapper.setVideoCaptureDevice(r(startLocalPreview), dev);
+      window.configuredDevice = dev;
+      service.setVideoCaptureDevice(CDO.createResponder(startLocalPreview), dev);
     } else {
       log_e("None video capture devices installed.");
     }
   };
   log_d("Getting video capture devices");
-  PluginServiceWrapper.getVideoCaptureDeviceNames(r(setVideoDev));
+  service.getVideoCaptureDeviceNames(CDO.createResponder(setVideoDev));
 
 }
 
+/**
+ * Starts local preview of the user:
+ * - requests the service to start capturing local user's video feed from
+ * selected webcam
+ * - upon successful result, initializes the renderer.
+ */
 function startLocalPreview() {
   log_d("Starting local video");
-  var succHandler = function (rendererId) {
+  $('#webcamsSelect').val(window.configuredDevice);
+  var succHandler = function (sinkId) {
+    window.localPreviewStarted = true;
     log_d("Local video started. Setting up renderer");
-    var objectContent = RENDER_TMPL.replace('#', rendererId);
-    $('#localVideoWrapper').html('').html(objectContent)
+    var rendererContent = RENDER_LOCAL_TMPL.replace('#', '_local');
+    $('.feeds-wrapper').append($(rendererContent));
+    CDO.renderSink(sinkId, 'userFeed_local');
   };
-  PluginServiceWrapper.startLocalVideo(r(succHandler), 320, 240);
+  service.startLocalVideo(CDO.createResponder(succHandler));
 }
 
-
+/**
+ * Tries to perform plugin self-update.
+ */
 function tryUpdatePlugin() {
-  function onUpdateProgress(value) {
-  }
+  var updateListener = {};
+  updateListener.updateProgress = function (value) {
+    log_d("Got update progress: " + value);
+  };
 
-  function onUpdateStatus(eventType, errCode, errMessage) {
+  updateListener.updateStatus = function (eventType, errCode, errMessage) {
+    log_d("Got update event type: " + eventType);
     switch (eventType) {
       case 'UPDATING':
 //          Update process started
@@ -160,68 +270,18 @@ function tryUpdatePlugin() {
       default:
         break;
     }
-  }
-
-
-  plugin.update({
-                  updateProgress:onUpdateProgress,
-                  updateStatus:onUpdateStatus
-                }, getUpdateDescrUrl())
+  };
+  plugin.update(updateListener)
 }
 
+/**
+ * Shows install button in case the plugin isn't installed.
+ */
 function showInstallFrame() {
   log_d("Plugin not installed. Use install plugin button. Refresh the page when complete");
-  getDescriptor(function (descr) {
-    var href = descr['url.installer'];
-    if ($.browser.msie) {
-      href = descr['url.clickOnceInstaller']
-    } else if ($.browser.webkit && window.navigator.userAgent.match(/Chrome/)) {
-      href = descr['url.chromeExtension'];
-    } else if ($.browser.mozilla) {
-      href = descr['url.firefoxExtension'];
-    }
+  CDO.getInstallerURL(CDO.createResponder(function (url) {
     $('#installButton').attr('href', href).show();
-  });
-}
-
-
-function getDescriptor(responder) {
-  var url = getUpdateDescrUrl();
-  $.get(url, function (data) {
-    var descriptor = {};
-    $.each(data.split('\n'), function (k, v) {
-      if (!v.match(/^ *#/)) {
-        var propItems = v.split('=');
-        descriptor[propItems[0]] = propItems[1];
-      }
-    });
-    responder(descriptor);
-  });
-}
-
-function getUpdateDescrUrl() {
-  var url = UPDATE_DESCR_BASE;
-  if (window.navigator.userAgent.match(/Windows/)) {
-    url += 'win';
-  } else {
-    url += 'mac';
-  }
-  return url;
-}
-
-function r(resultHandler, errHandler, context) {
-  if (context === undefined) {
-    context = new Object();
-  }
-  if (errHandler === undefined) {
-    errHandler = $.noop;
-  }
-  if (resultHandler === undefined) {
-    resultHandler = $.noop;
-  }
-  context.result = resultHandler;
-  context.error = errHandler;
-  return context;
+  }));
 }
 
 /**
@@ -230,40 +290,70 @@ function r(resultHandler, errHandler, context) {
  */
 
 /**
+ * Connects to scope with given id
  *
- * @param roomId
+ * @param scopeId
  */
-function connect(roomId) {
-  log_d("Trying to connect to media scope with id: " + roomId);
+function connect(scopeId) {
+  log_d("Trying to connect to media scope with id: " + scopeId);
   var connDescr = $.extend({}, CONNECTION_DESCRIPTOR);
   connDescr.token = (Math.floor(Math.random() * 10000)) + '';
-  connDescr.url += roomId;
+  connDescr.url += scopeId;
   var succHandler = function () {
     log_d("Successfully connected");
+    window.connectedScopeId = scopeId;
   };
   var errHandler = function (code, msg) {
     log_e("Failed to connect due to: " + msg + " (" + code + ")");
   };
-  PluginServiceWrapper.connect(r(succHandler, errHandler), connDescr);
+  service.connect(CDO.createResponder(succHandler, errHandler), connDescr);
 }
 
+/**
+ * Terminates previously established connection.
+ */
+function disconnect() {
+  service.disconnect(CDO.createResponder(function () {
+    $('.remote-feed').remove();
+  }), window.connectedScopeId);
+}
+
+/**
+ *
+ * New user handler - renders remote user's video feed.
+ * @param {CDO.UserStateChangedEvent} details
+ */
 function newUser(details) {
   log_d("Got new user with details: " + JSON.stringify(details));
-  var objectContent = RENDER_TMPL.replace('#', details.vcamId);
-  $('#remoteVideoWrapper').html('').html(objectContent)
+  if (details.videoPublished) {
+    var rendererContent = RENDER_TMPL.replace('#', details.userId);
+    $('.feeds-wrapper').append($(rendererContent));
+    CDO.renderSink(details.videoSinkId, 'userFeed' + details.userId);
+  }
 }
 
+/**
+ * User left handler - removes the remote user renderer.
+ * @param details
+ */
 function userGone(details) {
   log_d("Got user left for user with details: " + JSON.stringify(details));
-  $('#remoteVideoWrapper').html('')
+  $('#userFeed' + details.userId).html('').remove();
 }
 
+
+/**
+ * Logging
+ * @param msg
+ */
 function log_d(msg) {
+  //noinspection StringLiteralBreaksHTMLJS
   $('<li>' + msg + '</li>').appendTo($('#logContainer'))
 
 }
 
 function log_e(msg) {
+  //noinspection StringLiteralBreaksHTMLJS
   $('<li class="error">' + msg + '</li>').appendTo($('#logContainer'))
 
 }
