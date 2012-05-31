@@ -44,6 +44,11 @@ var RENDER_TMPL = '<li id="userFeed#" class="remote-feed"></li>';
 var RENDER_LOCAL_TMPL = '<li id="userFeed#"></li>';
 
 /**
+ * Id of scope to which user is connected.
+ */
+var connectedScopeId;
+
+/**
  * Connection descriptor - describes the connection to be established.
  * @type {Object}
  */
@@ -81,6 +86,7 @@ var CONNECTION_DESCRIPTOR = {
  * - show the install plugin button otherwise
  */
 function initPlugin() {
+  initUI();
 
 //  Setup logging using our handler
   CDO.initLogging(function (lev, msg) {
@@ -113,17 +119,63 @@ function initPlugin() {
 }
 
 /**
+ * Initialize the UI components.
+ */
+function initUI() {
+  $('#webcamsSelect').append($('<option value="none">-- Select --</option> ')).val('none');
+  $('#webcamsSelect').change(function () {
+    var selected = $(this).val();
+    service.setVideoCaptureDevice(CDO.createResponder(function () {
+      window.configuredDevice = selected;
+      startLocalPreview();
+    }), selected);
+  });
+  $('#publishAudioChckbx').change(getPublishChckboxChangedHandler(CDO.MEDIA_TYPE_AUDIO));
+  $('#publishVideoChckbx').change(getPublishChckboxChangedHandler(CDO.MEDIA_TYPE_VIDEO));
+}
+
+function getPublishChckboxChangedHandler(mediaType) {
+  return function () {
+    if ($(this).is(':checked')) {
+      service.publish(CDO.createResponder(),
+                      connectedScopeId,
+                      mediaType, {})
+    } else {
+      service.unpublish(CDO.createResponder(),
+                        connectedScopeId,
+                        mediaType)
+    }
+
+
+  };
+}
+
+/**
  * Further configures, the plugin - creates service and initializes devices.
  */
 function startPlugin() {
   log_d("Starting the plug-in");
-
+  $('#installButton').hide();
 //  Create and configure listener
   var listener = new CDO.CloudeoServiceListener();
   listener.onUserEvent = function (/**CDO.UserStateChangedEvent*/e) {
     if (e.isConnected) {
       newUser(e);
     } else {
+      userGone(e);
+    }
+  };
+  listener.onMediaStreamEvent = function(e){
+    log_d("Got new media stream event: " + JSON.stringify(e));
+    if(e.mediaType !== CDO.MEDIA_TYPE_VIDEO) {
+//      Ignore other event types.
+      return;
+    }
+    if(e.videoPublished) {
+//      User just published the video feed
+      newUser(e);
+    } else {
+//      User just stoped publishing the video feed
       userGone(e);
     }
   };
@@ -190,17 +242,9 @@ function initVideo() {
   var setVideoDev = function (devs) {
     log_d("Got video capture devices: " + JSON.stringify(devs));
     var dev = '';
-    $('#webcamsSelect').append($('<option value="none">-- Select --</option> ')).val('none');
     $.each(devs, function (k, v) {
       dev = k;
       $('#webcamsSelect').append($('<option value="' + k + '">' + v + '</option> '));
-    });
-    $('#webcamsSelect').change(function () {
-      var selected = $(this).val();
-      service.setVideoCaptureDevice(CDO.createResponder(function () {
-        window.configuredDevice = selected;
-        startLocalPreview();
-      }), selected);
     });
     if (dev) {
       log_d("Using video capture device: " + JSON.stringify(devs[dev]));
@@ -280,8 +324,15 @@ function tryUpdatePlugin() {
 function showInstallFrame() {
   log_d("Plugin not installed. Use install plugin button. Refresh the page when complete");
   CDO.getInstallerURL(CDO.createResponder(function (url) {
-    $('#installButton').attr('href', href).show();
+    $('#installButton').
+        attr('href', url).
+        show().
+        click(pollForPlugin);
   }));
+}
+
+function pollForPlugin() {
+  plugin.startPolling(startPlugin);
 }
 
 /**
@@ -297,11 +348,13 @@ function showInstallFrame() {
 function connect(scopeId) {
   log_d("Trying to connect to media scope with id: " + scopeId);
   var connDescr = $.extend({}, CONNECTION_DESCRIPTOR);
+  connDescr.autopublishAudio = $('#publishAudioChckbx').is(':checked');
+  connDescr.autopublishVideo = $('#publishVideoChckbx').is(':checked');
   connDescr.token = (Math.floor(Math.random() * 10000)) + '';
   connDescr.url += scopeId;
   var succHandler = function () {
     log_d("Successfully connected");
-    window.connectedScopeId = scopeId;
+    connectedScopeId = scopeId;
   };
   var errHandler = function (code, msg) {
     log_e("Failed to connect due to: " + msg + " (" + code + ")");
@@ -315,7 +368,7 @@ function connect(scopeId) {
 function disconnect() {
   service.disconnect(CDO.createResponder(function () {
     $('.remote-feed').remove();
-  }), window.connectedScopeId);
+  }), connectedScopeId);
 }
 
 /**
